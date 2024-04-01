@@ -1,41 +1,34 @@
-from aws_lambda_powertools import Logger, Tracer
-from aws_lambda_powertools.utilities.data_classes import event_source, S3Event
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
 import boto3
-import os
-  
-destination_bucket = os.environ['DESTINATION_BUCKET']
-s3 = boto3.resource('s3')
-logger = Logger(service="APP")
-tracer = Tracer(service="APP")
+from aws_xray_sdk.core import patch_all
 
-@tracer.capture_lambda_handler
-@logger.inject_lambda_context(
-    log_event=True
-)
-@event_source(data_class=S3Event)
-def handler(event: S3Event, context):
-    try:
-        bucket_name = event.bucket_name
-        for record in event.records:
+from aws_lambda_powertools.utilities.data_classes import APIGatewayProxyEvent
+from aws_lambda_powertools.utilities.typing import LambdaContext
+from aws_lambda_powertools.utilities.validation import validator
 
-            # get object from source bucket
-            object_key = record.s3.get_object.key
-            originalObject = s3.Object(bucket_name, object_key)
-            logger.info(originalObject)
+try:
+    from schemas import OUTPUT_SCHEMA
+    patch_all()
+except:
+    from src.schemas import OUTPUT_SCHEMA
 
-            # transform message to uppercase
-            lowerCaseMessage = originalObject.get()['Body'].read().decode('utf-8')
-            upperCaseMessage = lowerCaseMessage.upper()
-            logger.info(upperCaseMessage)
 
-            # put uppercase message into destination bucket
-            object = s3.Object(
-                bucket_name=destination_bucket, 
-                key=object_key
-            )
+@validator(outbound_schema=OUTPUT_SCHEMA)
+def lambda_handler(event: APIGatewayProxyEvent, context: LambdaContext) -> dict:
 
-            object.put(Body=upperCaseMessage)
+    s3_client = boto3.client('s3')
+    s3_response = s3_client.list_buckets()
 
-    except Exception as e:
-        logger.exception(e)
-        raise
+    bucket_list = "|".join([x["Name"] for x in s3_response["Buckets"]])
+    
+    print("Hello logfile!")
+
+    return {
+        "statusCode": 200,
+        "body": bucket_list
+    }
+
+
+

@@ -1,165 +1,48 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: >
-    This template deploys a code sample for testing an asynchronous architecture using Python.
+Description: SAM Template for apigw-lambda
 
-Parameters:
-  DeployTestResources:
-    Description: The parameter instructs the template whether or not to deploy test resources to your environment.
-    Default: "True"
-    Type: String
-    AllowedValues:
-      - "True"
-      - "False"
-    ConstraintDescription: Allowed values are True and False
-
-Conditions:
-  CreateTestResources: !Equals [!Ref DeployTestResources, "True"]
-
-Globals: # https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-specification-template-anatomy-globals.html
-    Function:
-        Timeout: 15
-        MemorySize: 256
-        Runtime: python3.9
-        Tracing: Active # https://docs.aws.amazon.com/lambda/latest/dg/lambda-x-ray.html
-        # Embed Lambda Powertools as a shared Layer
-        # See: https://awslabs.github.io/aws-lambda-powertools-python/latest/#lambda-layer
-        Layers: # 
-            - !Sub arn:aws:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPython:9
-        Environment:
-            Variables:
-                DESTINATION_BUCKET: 
-                  !Sub "async-destination-${AWS::StackName}-${AWS::AccountId}"
-                RESULTS_TABLE: 
-                  !Sub "async-results-${AWS::StackName}-${AWS::AccountId}"                
-                # Powertools env vars: https://awslabs.github.io/aws-lambda-powertools-python/#environment-variables
-                LOG_LEVEL: INFO
-                POWERTOOLS_LOGGER_SAMPLE_RATE: 0.1
-                POWERTOOLS_LOGGER_LOG_EVENT: true
-                POWERTOOLS_METRICS_NAMESPACE: MyServerlessApplication
-                POWERTOOLS_SERVICE_NAME: async
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 30
 
 Resources:
-  SourceBucket:
-    Type: AWS::S3::Bucket
-    UpdateReplacePolicy: Delete
+  PythonTestDemo:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Properties:
-      BucketName: 
-        !Sub "async-source-${AWS::StackName}-${AWS::AccountId}"
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-        - ServerSideEncryptionByDefault:
-            SSEAlgorithm: AES256
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-
-  DestinationBucket:
-    Type: AWS::S3::Bucket
-    UpdateReplacePolicy: Delete
-    Properties:
-      BucketName:
-        !Sub "async-destination-${AWS::StackName}-${AWS::AccountId}"
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-        - ServerSideEncryptionByDefault:
-            SSEAlgorithm: AES256
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-
-  ToUppercaseTextTransformer:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: 
-        !Sub "ToUppercaseTextTransformer-${AWS::StackName}-${AWS::AccountId}"
+      Tracing: Active
+      Policies:
+        - AWSXrayWriteOnlyAccess
+        - Version: '2012-10-17' # Policy Document
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:ListAllMyBuckets
+              Resource: 'arn:aws:s3:::*'
       CodeUri: src/
-      Handler: app.handler
-      Policies:
-        - S3ReadPolicy:
-            BucketName: 
-              !Sub "async-source-${AWS::StackName}-${AWS::AccountId}"
-        - S3CrudPolicy:
-            BucketName: 
-              !Sub "async-destination-${AWS::StackName}-${AWS::AccountId}"
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
       Events:
-        FileUpload:
-          Type: S3
+        HelloWorld:
+          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
           Properties:
-            Bucket: !Ref SourceBucket
-            Events: s3:ObjectCreated:*
-            Filter:
-              S3Key:
-                Rules:
-                  - Name: suffix
-                    Value: '.txt'
-
-  AsyncTransformTestResultsTable:
-    Type: AWS::DynamoDB::Table
-    Condition: CreateTestResources
-    Properties: 
-      TableName: 
-        !Sub "async-results-${AWS::StackName}-${AWS::AccountId}"
-      AttributeDefinitions: 
-        - AttributeName: id
-          AttributeType: S
-      KeySchema: 
-        - AttributeName: id
-          KeyType: HASH
-      ProvisionedThroughput: 
-        ReadCapacityUnits: 2
-        WriteCapacityUnits: 2
-
-  DestinationBucketListener:
-    Type: AWS::Serverless::Function
-    Condition: CreateTestResources
-    Properties:
-      FunctionName: 
-        !Sub "DestinationBucketListener-${AWS::StackName}-${AWS::AccountId}"
-      CodeUri: tests/integration
-      Handler: event_listener_lambda.handler
-      Policies:
-        - DynamoDBWritePolicy:
-            TableName: !Ref AsyncTransformTestResultsTable
-        - S3ReadPolicy:
-            BucketName: 
-              !Sub "async-destination-${AWS::StackName}-${AWS::AccountId}"
-      Events:
-        FileUpload:
-          Type: S3
-          Properties:
-            Bucket: !Ref DestinationBucket
-            Events: s3:ObjectCreated:*
-            Filter:
-              S3Key:
-                Rules:
-                  - Name: suffix
-                    Value: '.txt'
-
+            Path: /hello
+            Method: get
 
 Outputs:
-
-    SourceBucketName:
-      Description: "Source bucket for asynchronous testing sample"
-      Value: !Ref SourceBucket
-
-    DestinationBucketName:
-      Description: "Destination bucket for asynchronous testing sample"
-      Value: !Ref DestinationBucket
-
-    DestinationBucketListenerName:
-      Condition: CreateTestResources
-      Description: "Lambda Function to listen for test results"
-      Value: !Ref DestinationBucketListener
-
-    AsyncTransformTestResultsTable:
-      Condition: CreateTestResources
-      Description: "DynamoDB table to persist test results"
-      Value: !Ref AsyncTransformTestResultsTable
-
-
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  HelloWorldApi:
+    Description: "API Gateway endpoint URL for Prod stage for Hello World function"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/hello/"
+  PythonTestDemo:
+    Description: "Hello World Lambda Function ARN"
+    Value: !GetAtt PythonTestDemo.Arn
+  PythonTestDemoIamRole:
+    Description: "Implicit IAM Role created for Hello World function"
+    Value: !GetAtt PythonTestDemoRole.Arn
 
